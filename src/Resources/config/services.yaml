@@ -1,0 +1,16 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    Pedropiedade\AuditLogBundle\:
+        resource: '../../*'
+        exclude:
+            - '../../DependencyInjection/'
+            - '../../Entity/'
+            - '../../AuditLogBundle.php'
+            - '../../AuditLogEntryFactoryInterface.php'
+
+    Pedropiedade\AuditLogBundle\AuditLogger:
+        arguments:
+            $defaultIgnoredAttributes: '%audit_log.default_ignored_attributes%'
