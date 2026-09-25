@@ -123,8 +123,72 @@ class Issue
 }
 ```
 
-## Usage
+## Reading the log back
 
-Reading the log back is up to the consuming app - inject
-`Pedropiedade\AuditLogBundle\Repository\AuditLogRepositoryInterface` and use
-`findForQueryQb(AuditLogQuery)` / `findDeletedForEntityQb(string $entityFqcn)`.
+This bundle only writes. There's no shipped controller, endpoint, DTO or UI for reading or
+displaying entries - that's entirely up to the consuming app, since "who's allowed to see
+what" and "how it's displayed" are inherently app-specific decisions this package can't make
+for you. Inject `AuditLogRepositoryInterface` and build whatever surface you need on top of
+it.
+
+### Example: a minimal read endpoint
+
+```php
+use Pedropiedade\AuditLogBundle\Dto\AuditLogQuery;
+use Pedropiedade\AuditLogBundle\Repository\AuditLogRepositoryInterface;
+
+final class AuditLogController
+{
+    public function __construct(
+        private readonly AuditLogRepositoryInterface $repository,
+    ) {
+    }
+
+    #[Route('/audit-log', methods: ['GET'])]
+    public function history(Request $request): JsonResponse
+    {
+        // Your own access control goes here - e.g. denyAccessUnlessGranted()
+        // scoped to the specific $fqcn/$id being asked about.
+
+        $query = new AuditLogQuery()
+            ->setFqcn($request->query->getString('fqcn'))
+            ->setId($request->query->get('id')); // null -> only "delete" entries for $fqcn
+
+        $entries = $this->repository->findForQueryQb($query)->getQuery()->getResult();
+
+        return new JsonResponse(array_map(
+            fn (AuditLog $entry) => [
+                'action' => $entry->getAction(),
+                'date' => $entry->getCreatedAt()?->format(\DateTimeInterface::ATOM),
+                'user' => $entry->getUser()?->getUserIdentifier(),
+                'route' => $entry->getRequestRoute(),
+                'ip' => $entry->getIpAddress(),
+                'changes' => $entry->getEventData(), // ['field' => ['from' => ..., 'to' => ...], ...]
+            ],
+            $entries,
+        ));
+    }
+}
+```
+
+### Repository methods
+
+- `findForQueryQb(AuditLogQuery $query): QueryBuilder` - all entries for one entity type
+  (`$query->setFqcn(Issue::class)`), optionally scoped to one instance
+  (`$query->setId($issue->getId())`); with no id set, returns only that type's `delete`
+  entries (there's no live row left to scope a full history to).
+- `findDeletedForEntityQb(string $entityFqcn): QueryBuilder` - every deletion of every entity
+  of that type, across all instances - inherently a cross-tenant view, gate it accordingly
+  (e.g. admin-only) regardless of how you gate the per-instance history above.
+
+Both return a `QueryBuilder` (aliased `a`), not the results directly - add your own
+`->setMaxResults()`/pagination, ordering overrides, or additional `andWhere()` filters before
+calling `->getQuery()->getResult()`.
+
+### What's on `AbstractAuditLog`
+
+`getEntityFqcn()` / `getEntityId()` (which entity, which row), `getAction()` (`insert` /
+`update` / `delete`), `getUser()` (`?UserInterface`, your `user_class`), `getRequestRoute()`,
+`getIpAddress()`, `getCreatedAt()`, and `getEventData()` - `array<string, array{from: string,
+to: string}>`, one entry per changed field, both sides already formatted as display strings
+(not raw values) by `AuditLogEntryProcessor`.
